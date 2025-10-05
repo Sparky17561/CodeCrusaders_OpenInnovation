@@ -126,27 +126,37 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS settings
+
 # CORS settings
 if DEBUG:
     # Development: Allow all origins
     CORS_ALLOW_ALL_ORIGINS = True
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://wolftor.vercel.app"  # Remove trailing slash
-    ]
 else:
     # Production: Specify your frontend URL
-    CORS_ALLOWED_ORIGINS = os.environ.get(
-        'CORS_ALLOWED_ORIGINS',
-        'https://wolftor.vercel.app'  # Remove trailing slash
-    ).split(',') if os.environ.get('CORS_ALLOWED_ORIGINS') else ['https://wolftor.vercel.app']
     CORS_ALLOW_ALL_ORIGINS = False
+    cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', 'https://wolftor.vercel.app')
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(',')]
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # Security settings for production
 if not DEBUG:
