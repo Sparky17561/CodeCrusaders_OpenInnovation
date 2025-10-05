@@ -20,7 +20,10 @@
 **🌟 Empowering High School Heroes: Turn Math Mysteries into Animated Masterpieces! 🌟**
 <p align="center">
   Examplatory Video Generated: <br>
-  <img src="https://github.com/user-attachments/assets/cbf8452c-b888-4f00-9721-734ff9ac7f9d" alt="AngularSizeOfMoon">
+  <img src="https://github.com/user-attachments/assets/cbf8452c-b888-4f00-9721-734ff9ac7f9d" alt="AngularSizeOfMoon"> <img src="https://github.com/user-attachments/assets/4898ebdc-50c5-44db-a07a-5bd1f55a6e4a">
+  <img src="https://github.com/user-attachments/assets/1731bf5c-132d-448b-ba81-6695d4a88738">
+
+
 </p>
 
 
@@ -34,7 +37,7 @@ Judges and Wolfram wizards: Picture a platform where education meets entertainme
 
 ## 🚀 Why Wolftor? The Spark of Innovation
 
-In a world flooded with text-only tutors, Wolftor shines by blending **cutting-edge computation** with **cinematic visualization**:
+In a world flooded with text-only tutors, Wolftor shines by blending **cutting-edge computation** with **cinematic visualization** insipired by wolfram one llm kit :
 
 - **Effortless Input**: Snap a photo of your problem or type it directly—Wolftor handles the rest with smart parsing.
 - **Wolfram-Powered Precision**: Tap into Wolfram's engine for accurate, step-by-step breakdowns in plain English.
@@ -69,7 +72,7 @@ Wolftor leverages a sleek, modern architecture:
 
 - **Frontend**: React.js – Responsive, interactive, and user-friendly.
 - **Backend**: Django (Python) – Robust APIs for seamless orchestration.
-- **Core Solver**: Wolfram Alpha API – Unrivaled accuracy in computations.
+- **Core Solver**: Wolfram Cloud + Wolfram Engine – Unrivaled accuracy in computations.
 - **Visualization Engine**: Manim – Creating professional, animated explanations.
 - **Video Optimization**: FFmpeg – Ensuring high-quality, fast-loading videos.
 - **Additional Tools**: Image parsing for uploaded problems (e.g., via OCR if needed).
@@ -84,7 +87,7 @@ Wolftor leverages a sleek, modern architecture:
 4. **FFmpeg Finale**: Renders and optimizes the video for instant viewing.
 5. **Experience the Enlightenment**: Get text solutions alongside an embedded video that brings ideas to life!
 
-All in under 30 seconds—turning homework hurdles into highlights.
+All in under 2 minutes (just like instant noodles) —turning homework hurdles into highlights.
 
 ---
 ## 💼 Business Model: Sustainable Impact for Global STEM Education
@@ -100,11 +103,17 @@ All in under 30 seconds—turning homework hurdles into highlights.
 ## 📦 Installation & Setup: Get Started in Minutes!
 
 ### Prerequisites
-- Python 3.8+
-- Node.js 14+
-- Wolfram Alpha API Key ([Sign up here](https://developer.wolfram.com))
+- Python 3.13.4
+- Node.js 22.20.0
+- Wolfram Cloud -> New Notebook
+- <img width="1024" height="367" alt="image" src="https://github.com/user-attachments/assets/5daba7e2-08d1-4e9a-acc9-bf3a7dae7335" />
 - Manim ([Installation Guide](https://docs.manim.community))
 - FFmpeg (Install via your package manager)
+- Create .env file
+   - Put your api keys in it:
+   - Eg. GEMINI_API_KEY=""
+WOLFRAM_CONSUMER_KEY=""
+WOLFRAM_CONSUMER_SECRET=""
 
 ### Quick Start
 1. Clone the Repository:
@@ -117,7 +126,6 @@ All in under 30 seconds—turning homework hurdles into highlights.
    ```
    cd backend
    pip install -r requirements.txt
-   python manage.py migrate
    python manage.py runserver
    ```
    - Add your Wolfram API key to `settings.py` or a `.env` file.
@@ -139,7 +147,7 @@ For production, consider Docker—compose file in the works!
 
 - **As a Student**: Jump in, input your problem, and hit "Solve & Visualize." Let the animation unfold your understanding!
 - **As a Contributor**: Star the repo, fork it, and PR your ideas—add new animations, subjects, or integrations.
-- **Demo Teaser**: [Check our live demo](https://wolftor-demo.example.com) (Placeholder—deploy your own for a spin!).
+- **Demo Teaser**: [Check our live demo](https://wolftor.vercel.app/) 
 
 ---
 
@@ -153,7 +161,7 @@ A powerhouse squad of 5 from the HackAura Open Innovation Track:
 - **Shrusti Kadam**: Manim Maestro (Visualization Virtuoso)  
 - **Aaditya Jaiswar**: FFmpeg Firestarter (Pipeline Pro)  
 
-Reach out: [codecrusaders@example.com](mailto:sahilrane249@gmail.com) | [GitHub Repo](https://github.com/Sparky17561/CodeCrusaders_OpenInnovation)
+Mail-> [codecrusaders@example.com](mailto:sahilrane249@gmail.com) | Github -> [GitHub Repo](https://github.com/Sparky17561/CodeCrusaders_OpenInnovation)
 
 ---
 
