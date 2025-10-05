@@ -163,3 +163,9 @@ if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     X_FRAME_OPTIONS = 'DENY'
     SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Add this right after your CORS settings
+CSRF_TRUSTED_ORIGINS = [
+    'https://wolftor.vercel.app',
+    'https://codecrusaders-openinnovation.onrender.com',
+]
