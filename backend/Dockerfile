@@ -43,4 +43,4 @@ ENV PORT=8000
 EXPOSE 8000
 
 # Run the application with gunicorn (production server)
-CMD ["gunicorn", "app.wsgi:application", "--bind", "0.0.0.0:10000", "--timeout", "360"]
+CMD ["gunicorn", "backend.wsgi:application", "--bind", "0.0.0.0:10000", "--timeout", "360"]
