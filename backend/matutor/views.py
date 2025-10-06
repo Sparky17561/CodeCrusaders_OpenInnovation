@@ -1232,198 +1232,368 @@ def explain_problem(request):
             "traceback": traceback.format_exc()
         }, status=500)
 
+import subprocess
+import sys
+import os
+import json
+import tempfile
+import google.generativeai as genai
+from django.conf import settings
+
+def validate_and_fix_manim(script_text: str, problem_text: str, results_json: dict, max_attempts=3):
+    """
+    Validates Manim script, auto-fixes errors, and renders video
+    Returns: {
+        'success': bool,
+        'video_path': str or None,
+        'script': str (final working script),
+        'error': str or None
+    }
+    """
+    
+    # Configure Gemini Flash for fast fixes
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    ]
+    
+    results_str = json.dumps(results_json, indent=2)
+    current_script = script_text
+    
+    for attempt in range(max_attempts):
+        print(f"Attempt {attempt + 1}/{max_attempts} to render Manim")
+        
+        # Write script to temp file
+        script_file = os.path.join(settings.MEDIA_ROOT, 'temp', f'manim_script_{attempt}.py')
+        os.makedirs(os.path.dirname(script_file), exist_ok=True)
+        
+        with open(script_file, 'w') as f:
+            f.write(current_script)
+        
+        # Try to render with Manim
+        render_result = render_manim(script_file, attempt)
+        
+        if render_result['success']:
+            print("Manim render successful!")
+            return {
+                'success': True,
+                'video_path': render_result['video_path'],
+                'script': current_script,
+                'error': None
+            }
+        
+        # Render failed - use AI to fix
+        error_output = render_result['error']
+        print(f"Render failed with error: {error_output[:500]}")
+        
+        if attempt < max_attempts - 1:
+            # Ask Gemini to fix the code
+            fixed_script = fix_manim_code(
+                model, 
+                current_script, 
+                error_output, 
+                problem_text, 
+                results_str,
+                safety_settings
+            )
+            
+            if fixed_script:
+                current_script = fixed_script
+                print("Code fixed by AI, retrying render...")
+            else:
+                print("AI could not fix the code")
+                break
+    
+    # All attempts failed
+    return {
+        'success': False,
+        'video_path': None,
+        'script': current_script,
+        'error': f"Failed after {max_attempts} attempts. Last error: {render_result['error'][:500]}"
+    }
+
+
+def render_manim(script_file: str, attempt_num: int, timeout=300):
+    """
+    Render Manim script to video
+    Returns: {'success': bool, 'video_path': str or None, 'error': str or None}
+    """
+    try:
+        output_dir = os.path.join(settings.MEDIA_ROOT, 'videos')
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Run Manim render
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "manim",
+                script_file,
+                "PhysicsProblem",
+                "-ql",  # Low quality for faster rendering
+                "--media_dir", output_dir,
+                "--format", "mp4"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        
+        if result.returncode == 0:
+            # Find the generated video
+            video_files = []
+            for root, dirs, files in os.walk(output_dir):
+                for file in files:
+                    if file.endswith('.mp4') and 'PhysicsProblem' in file:
+                        video_files.append(os.path.join(root, file))
+            
+            if video_files:
+                # Get the most recent video
+                latest_video = max(video_files, key=os.path.getctime)
+                return {
+                    'success': True,
+                    'video_path': latest_video,
+                    'error': None
+                }
+        
+        # Render failed
+        error_msg = result.stderr if result.stderr else result.stdout
+        return {
+            'success': False,
+            'video_path': None,
+            'error': error_msg
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'video_path': None,
+            'error': 'Manim render timeout (>5 minutes)'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'video_path': None,
+            'error': str(e)
+        }
+
+
+def fix_manim_code(model, broken_code: str, error_output: str, problem_text: str, results_str: str, safety_settings):
+    """
+    Use Gemini to fix broken Manim code
+    Returns: fixed code string or None
+    """
+    
+    # Extract relevant error info
+    error_summary = extract_error_summary(error_output)
+    
+    fix_prompt = f"""Fix this broken Manim code. Output ONLY the corrected Python code with NO explanations, NO markdown, NO ``` blocks.
+
+BROKEN CODE:
+{broken_code}
+
+ERROR:
+{error_summary}
+
+COMMON FIXES NEEDED:
+- Complete any incomplete code blocks
+- Fix unclosed parentheses, brackets, braces
+- Fix undefined variables
+- Use ONLY these colors: WHITE, BLACK, GRAY, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, PINK, TEAL, GOLD
+- Never use .format() with MathTex - use: MathTex(r"x = " + f"{{val:.2f}}" + r"y")
+- Never index MathTex submobjects like [0][4]
+- Ensure self.remove() calls match what was added
+- Complete the construct() method fully
+
+CONTEXT:
+Problem: {problem_text}
+Results: {results_str}
+
+Output the complete fixed Python code now:"""
+    
+    try:
+        response = model.generate_content(
+            fix_prompt,
+            safety_settings=safety_settings,
+            generation_config={'temperature': 0.2, 'max_output_tokens': 4096}
+        )
+        
+        if not response.candidates or response.candidates[0].finish_reason != 1:
+            return None
+        
+        fixed_code = response.text.strip()
+        
+        # Clean up markdown
+        if '```' in fixed_code:
+            lines = fixed_code.split('\n')
+            # Remove first and last line if they contain ```
+            if lines[0].startswith('```'):
+                lines = lines[1:]
+            if lines and lines[-1].startswith('```'):
+                lines = lines[:-1]
+            fixed_code = '\n'.join(lines)
+        
+        fixed_code = fixed_code.replace('```python', '').replace('```', '').strip()
+        
+        # Basic syntax check
+        try:
+            compile(fixed_code, '<string>', 'exec')
+            return fixed_code
+        except SyntaxError:
+            return None
+            
+    except Exception as e:
+        print(f"Error fixing code: {e}")
+        return None
+
+
+def extract_error_summary(error_output: str, max_lines=30):
+    """Extract the most relevant error information"""
+    lines = error_output.split('\n')
+    
+    # Get last N lines which usually contain the actual error
+    relevant_lines = lines[-max_lines:]
+    
+    # Look for key error indicators
+    error_keywords = ['Error', 'Exception', 'Traceback', 'SyntaxError', 'NameError', 'TypeError']
+    important_lines = []
+    
+    for line in relevant_lines:
+        if any(keyword in line for keyword in error_keywords):
+            important_lines.append(line)
+    
+    if important_lines:
+        return '\n'.join(important_lines[-15:])  # Last 15 important lines
+    
+    return '\n'.join(relevant_lines)
+
+
+# Integration with your generate_video view:
 @csrf_exempt
 @require_POST
 def generate_video(request):
-    if request.method != "POST":
-        return HttpResponseBadRequest("Only POST allowed")
-
-    # Try to parse JSON body first, then fall back to form data
-    problem_text = None
-    
+    """
+    Generate educational video from math problem using Manim
+    with automatic error fixing and retry logic
+    """
     try:
-        if request.content_type == 'application/json':
-            data = json.loads(request.body.decode('utf-8'))
-            problem_text = data.get("problem")
-        else:
-            problem_text = request.POST.get("problem")
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logger.error(f"Request parsing error: {str(e)}")
-        return HttpResponseBadRequest(f"Invalid request format: {str(e)}")
-
-    if not problem_text:
-        return HttpResponseBadRequest("Missing 'problem' field")
-
-    logger.info(f"generate_video called for: {problem_text[:50]}...")
-
-    # Generate unique filenames
-    timestamp = int(time.time() * 1000)
-    solver_filename = f"wolfram_solver_{timestamp}.py"
-    manim_filename = f"manim_script_{timestamp}.py"
-    solver_path = os.path.join(WOLFRAM_TEMP_DIR, solver_filename)
-    manim_path = os.path.join(WOLFRAM_TEMP_DIR, manim_filename)
-    
-    try:
-        # ===== STEP 1: GET OR COMPUTE RESULTS =====
-        cached_results = get_cached_results(problem_text)
+        # Parse request
+        data = json.loads(request.body)
+        problem_text = data.get('problem', '').strip()
         
-        if cached_results:
-            logger.info("Using cached Wolfram results for video generation")
-            results_json = cached_results
-        else:
-            logger.info("No cached results found, computing with Wolfram...")
-            success, results_json, error_info = run_wolfram_solver(problem_text, solver_path)
-            
-            if not success:
-                error_info["solver_file"] = solver_filename
-                return JsonResponse(error_info, status=500)
-            
-            # Cache the results
-            set_cached_results(problem_text, results_json)
-
-        # ===== STEP 2: GENERATE MANIM SCRIPT =====
-        logger.debug("Generating Manim script...")
-        model = genai.GenerativeModel(
-            "gemini-2.5-pro",
-            generation_config={
-                "max_output_tokens": 8192,
-                "temperature": 0.1,
-            }
-        )
+        if not problem_text:
+            return JsonResponse({'error': 'No problem text provided'}, status=400)
         
+        logger.info(f"Generating video for: {problem_text[:100]}...")
+        
+        # Generate unique filenames
+        timestamp = int(time.time() * 1000)
+        solver_filename = f"wolfram_solver_{timestamp}.py"
+        solver_path = os.path.join(WOLFRAM_TEMP_DIR, solver_filename)
+        
+        # Step 1: Solve problem with Wolfram (using your existing function)
+        success, results_json, error_info = run_wolfram_solver(problem_text, solver_path)
+        
+        if not success:
+            return JsonResponse({
+                'error': 'Failed to solve problem',
+                'details': error_info
+            }, status=500)
+        
+        logger.info(f"Problem solved: {list(results_json.keys())}")
+        
+        # Step 2: Generate initial Manim script
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+        
+        logger.info("Generating Manim script...")
         manim_prompt = build_manim_prompt(problem_text, results_json)
-        manim_response = model.generate_content(manim_prompt)
-        script_text = manim_response.text.strip()
-
-        # Remove markdown fences
-        if script_text.startswith("```python"):
-            script_text = script_text[len("```python"):].strip()
-        if script_text.endswith("```"):
-            script_text = script_text[:-3].strip()
-
-        logger.debug(f"Generated Manim script length: {len(script_text)} chars")
-
-        # ===== STEP 2.5: EXTRACT CLASS NAME FROM SCRIPT =====
-        class_match = re.search(r'class\s+(\w+)\s*\(Scene\)', script_text)
-        if not class_match:
-            logger.error("Could not find Scene class in generated script")
+        
+        try:
+            manim_response = model.generate_content(
+                manim_prompt,
+                safety_settings=safety_settings,
+                generation_config={'temperature': 0.3, 'max_output_tokens': 4096}
+            )
+            
+            if not manim_response.candidates or manim_response.candidates[0].finish_reason != 1:
+                return JsonResponse({
+                    'error': 'AI blocked Manim script generation',
+                    'details': f'Reason: {manim_response.candidates[0].finish_reason}'
+                }, status=400)
+            
+            initial_script = manim_response.text.strip()
+            initial_script = initial_script.replace('```python', '').replace('```', '').strip()
+            
+        except Exception as e:
             return JsonResponse({
-                "error": "Could not find Scene class in generated script",
-                "solver_file": solver_filename,
-                "manim_script": script_text[:500]  # First 500 chars for debugging
+                'error': 'Failed to generate Manim script',
+                'details': str(e)
             }, status=500)
         
-        class_name = class_match.group(1)
-        logger.info(f"Extracted class name: {class_name}")
-
-        # Write Manim script to temp folder
-        with open(manim_path, "w", encoding="utf-8") as f:
-            f.write(script_text)
-        logger.debug(f"Wrote Manim script to {manim_path}")
-
-        # ===== STEP 3: RENDER VIDEO WITH MANIM =====
-        video_filename = f"manim_video_{timestamp}.mp4"
+        logger.info("Validating and rendering video...")
         
-        # Manim outputs to media/videos/<script_name>/<quality>/
-        script_basename = os.path.splitext(os.path.basename(manim_path))[0]
-        manim_output_dir = os.path.join("media", "videos", script_basename, "480p15")
-        
-        logger.debug(f"Rendering video with Manim (class: {class_name})...")
-        
-        # Run manim CLI with extracted class name
-        manim_proc = subprocess.run(
-            [sys.executable, "-m", "manim",
-             manim_path,
-             class_name,
-             "-ql",
-             "--format", "mp4",
-             "--media_dir", "media"],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            encoding="utf-8",
-            errors="replace"
+        # Step 3: Validate, fix, and render
+        result = validate_and_fix_manim(
+            script_text=initial_script,
+            problem_text=problem_text,
+            results_json=results_json,
+            max_attempts=3
         )
-
-        # Handle render errors
-        if manim_proc.returncode != 0:
-            logger.error(f"Manim render failed with return code {manim_proc.returncode}")
-            logger.error(f"Manim stderr: {manim_proc.stderr}")
-            return JsonResponse({
-                "error": "Manim render failed",
-                "details": manim_proc.stderr.strip(),
-                "solver_file": solver_filename,
-                "manim_file": manim_filename,
-                "manim_script": script_text[:500]
-            }, status=500)
-
-        # Find the generated video (using dynamic class name)
-        expected_video = os.path.join(manim_output_dir, f"{class_name}.mp4")
-        logger.debug(f"Looking for video at: {expected_video}")
         
-        if not os.path.exists(expected_video):
-            logger.error(f"Video file not found at expected path: {expected_video}")
+        if not result['success']:
             return JsonResponse({
-                "error": "Video file not found after rendering",
-                "expected_path": expected_video,
-                "class_name": class_name,
-                "solver_file": solver_filename,
-                "manim_file": manim_filename
-            }, status=500)
-
-        # Save video to media/videos/ directory
-        videos_dir = os.path.join(MEDIA_DIR, "videos")
-        os.makedirs(videos_dir, exist_ok=True)
-        final_video_path = os.path.join(videos_dir, video_filename)
-        
-        # Copy the video file
-        shutil.copy2(expected_video, final_video_path)
-        logger.info(f"Video copied to: {final_video_path}")
-        
-        # Verify the file exists at the final location
-        if not os.path.exists(final_video_path):
-            logger.error(f"Video file not found at final path after copy: {final_video_path}")
-            return JsonResponse({
-                "error": "Video file not saved properly",
-                "expected_path": final_video_path,
-                "source_path": expected_video
+                'error': 'Video generation failed',
+                'details': result['error'],
+                'solver_file': solver_filename
             }, status=500)
         
-        logger.info(f"Video successfully saved to: {final_video_path}")
-        logger.info(f"Video URL will be: /media/videos/{video_filename}")
-
-        # ===== STEP 4: GENERATE TRANSCRIPT FROM MANIM SCRIPT =====
-        logger.debug("Generating transcript...")
-        transcript_prompt = build_transcript_prompt(script_text, problem_text, results_json)
-        transcript_response = model.generate_content(transcript_prompt)
-        transcript_text = transcript_response.text.strip()
-
+        logger.info("Video rendered successfully!")
+        
+        # Step 4: Generate transcript
+        logger.info("Generating transcript...")
+        transcript_prompt = build_transcript_prompt(result['script'], problem_text, results_json)
+        
+        try:
+            transcript_response = model.generate_content(
+                transcript_prompt,
+                safety_settings=safety_settings,
+                generation_config={'temperature': 0.7, 'max_output_tokens': 2048}
+            )
+            
+            transcript = transcript_response.text.strip() if transcript_response.candidates else "Video explanation."
+        except Exception as e:
+            logger.error(f"Transcript failed: {e}")
+            transcript = "Video explanation of the problem and solution."
+        
+        # Step 5: Prepare response
+        video_url = result['video_path'].replace(str(settings.MEDIA_ROOT), '/media')
+        
         return JsonResponse({
-            "results": results_json,
-            "video_file": video_filename,
-            "video_url": f"/media/videos/{video_filename}",  # Updated URL path
-            "class_name": class_name,
-            "transcript": transcript_text,
-            "computation_engine": "Wolfram Engine",
-            "solver_file": solver_filename,
-            "manim_file": manim_filename,
-            "used_cached_results": cached_results is not None
+            'video_url': video_url,
+            'transcript': transcript,
+            'results': results_json,
+            'solver_file': solver_filename,
+            'success': True
         })
-
-    except subprocess.TimeoutExpired:
-        logger.error("Process timed out")
-        return JsonResponse({
-            "error": "Process timed out",
-            "solver_file": solver_filename if 'solver_filename' in locals() else None,
-            "manim_file": manim_filename if 'manim_filename' in locals() else None
-        }, status=500)
+        
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         logger.exception("Unexpected error in generate_video")
         return JsonResponse({
-            "error": str(e),
-            "solver_file": solver_filename if 'solver_filename' in locals() else None,
-            "manim_file": manim_filename if 'manim_filename' in locals() else None,
-            "traceback": traceback.format_exc()
+            'error': 'Internal server error',
+            'details': str(e)
         }, status=500)
 
 def build_wolftor_system_prompt() -> str:
