@@ -27,17 +27,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-gigsu5@)mph2v-!ce81o_tq7x6=5e%i#-g6s=^y3zsp_)c)j!l')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+DEBUG = 'True'
 
-# Allowed hosts configuration
-if DEBUG:
-    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
-else:
-    ALLOWED_HOSTS = [
-        '.onrender.com',
-        'codecrusaders-openinnovation.onrender.com',
-        '.vercel.app',
-    ]
+# # Allowed hosts configuration
+# if DEBUG:
+#     ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
+# else:
+#     ALLOWED_HOSTS = [
+#         '.onrender.com',
+#         'codecrusaders-openinnovation.onrender.com',
+#         '.vercel.app',
+#     ]
+
+ALLOWED_HOST=['*']
 
 # Application definition
 INSTALLED_APPS = [
@@ -54,7 +56,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
+    # 'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -118,7 +120,7 @@ STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # WhiteNoise configuration
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Media files
 MEDIA_URL = '/media/'
@@ -128,18 +130,21 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings - FIXED FOR PRODUCTION
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://wolftor.vercel.app",
-]
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:3000",
+#     "http://127.0.0.1:3000",
+#     "http://localhost:5173",
+#     "http://127.0.0.1:5173",
+#     "https://wolftor.vercel.app",
+# ]
+
+CORS_ALLOW_ALL_ORIGINS = True
+
 
 # Add custom origins from environment variable
-custom_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
-if custom_origins:
-    CORS_ALLOWED_ORIGINS.extend([origin.strip() for origin in custom_origins.split(',') if origin.strip()])
+# custom_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
+# if custom_origins:
+#     CORS_ALLOWED_ORIGINS.extend([origin.strip() for origin in custom_origins.split(',') if origin.strip()])
 
 # Allow credentials (cookies, authorization headers)
 CORS_ALLOW_CREDENTIALS = True
