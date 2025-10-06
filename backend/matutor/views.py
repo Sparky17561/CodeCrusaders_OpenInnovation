@@ -1284,7 +1284,7 @@ def generate_video(request):
         # ===== STEP 2: GENERATE MANIM SCRIPT =====
         logger.debug("Generating Manim script...")
         model = genai.GenerativeModel(
-            "gemini-2.5-flash",
+            "gemini-2.5-pro",
             generation_config={
                 "max_output_tokens": 8192,
                 "temperature": 0.1,
