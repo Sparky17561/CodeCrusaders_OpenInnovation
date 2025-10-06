@@ -1240,6 +1240,42 @@ import tempfile
 import google.generativeai as genai
 from django.conf import settings
 
+def validate_manim_script(script_text: str) -> tuple:
+    """
+    Pre-validate Manim script for common errors
+    Returns: (is_valid: bool, error_message: str)
+    """
+    issues = []
+    
+    # Check for single backslash in LaTeX commands (most common error)
+    problematic_patterns = [
+        (r'MathTex\([^)]*r"[^"]*\\O(?!mega)', 'Invalid escape: Use \\\\Omega not \\Omega'),
+        (r'MathTex\([^)]*r"[^"]*\\t(?!heta)', 'Invalid escape: Use \\\\theta not \\theta'),
+        (r'MathTex\([^)]*r"[^"]*\\a(?!lpha|rctan)', 'Invalid escape: Use \\\\alpha not \\alpha'),
+        (r'MathTex\([^)]*r"[^"]*\\f(?!rac)', 'Invalid escape: Use \\\\frac not \\frac'),
+        (r"MathTex\([^)]*r'[^']*\\O(?!mega)", 'Invalid escape: Use \\\\Omega not \\Omega'),
+    ]
+    
+    for pattern, msg in problematic_patterns:
+        matches = re.finditer(pattern, script_text)
+        for match in matches:
+            line_num = script_text[:match.start()].count('\n') + 1
+            issues.append(f"Line {line_num}: {msg}")
+    
+    # Check for required imports
+    if 'from manim import' not in script_text and 'import manim' not in script_text:
+        issues.append('Missing: from manim import *')
+    
+    # Check for Scene class
+    if not re.search(r'class\s+\w+\s*\(\s*Scene\s*\)', script_text):
+        issues.append('No Scene class found')
+    
+    if issues:
+        return False, '\n'.join(issues)
+    
+    return True, ''
+
+
 def validate_and_fix_manim(script_text: str, problem_text: str, results_json: dict, max_attempts=3):
     """
     Validates Manim script, auto-fixes errors, and renders video
@@ -1251,7 +1287,6 @@ def validate_and_fix_manim(script_text: str, problem_text: str, results_json: di
     }
     """
     
-    # Configure Gemini Flash for fast fixes
     genai.configure(api_key=settings.GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
     
@@ -1265,21 +1300,46 @@ def validate_and_fix_manim(script_text: str, problem_text: str, results_json: di
     results_str = json.dumps(results_json, indent=2)
     current_script = script_text
     
+    # Pre-validate before attempting any render
+    logger.info("Pre-validating Manim script...")
+    is_valid, validation_error = validate_manim_script(current_script)
+    
+    if not is_valid:
+        logger.warning(f"Pre-validation failed:\n{validation_error}")
+        logger.info("Attempting AI fix for validation errors...")
+        
+        fixed_script = fix_manim_code(
+            model, 
+            current_script, 
+            f"VALIDATION ERRORS:\n{validation_error}", 
+            problem_text, 
+            results_str,
+            safety_settings
+        )
+        
+        if fixed_script:
+            current_script = fixed_script
+            logger.info("Pre-validation errors fixed")
+        else:
+            logger.warning("Could not fix validation errors, proceeding anyway")
+    
     for attempt in range(max_attempts):
-        print(f"Attempt {attempt + 1}/{max_attempts} to render Manim")
+        logger.info(f"Render attempt {attempt + 1}/{max_attempts}")
         
         # Write script to temp file
         script_file = os.path.join(settings.MEDIA_ROOT, 'temp', f'manim_script_{attempt}.py')
         os.makedirs(os.path.dirname(script_file), exist_ok=True)
         
-        with open(script_file, 'w') as f:
+        with open(script_file, 'w', encoding='utf-8') as f:
             f.write(current_script)
+        
+        logger.info(f"Script written to: {script_file}")
         
         # Try to render with Manim
         render_result = render_manim(script_file, attempt)
         
         if render_result['success']:
-            print("Manim render successful!")
+            logger.info("Manim render successful!")
             return {
                 'success': True,
                 'video_path': render_result['video_path'],
@@ -1287,12 +1347,25 @@ def validate_and_fix_manim(script_text: str, problem_text: str, results_json: di
                 'error': None
             }
         
-        # Render failed - use AI to fix
+        # Render failed
         error_output = render_result['error']
-        print(f"Render failed with error: {error_output[:500]}")
+        logger.error(f"Render failed. Error length: {len(error_output)} chars")
+        
+        # Save full error to file for debugging
+        error_file = os.path.join(settings.MEDIA_ROOT, 'temp', f'error_{attempt}.txt')
+        try:
+            with open(error_file, 'w', encoding='utf-8') as f:
+                f.write(error_output)
+            logger.info(f"Error saved to: {error_file}")
+        except Exception as e:
+            logger.warning(f"Could not save error file: {e}")
+        
+        # Log truncated error
+        logger.error(f"Error preview:\n{error_output[:1000]}")
         
         if attempt < max_attempts - 1:
-            # Ask Gemini to fix the code
+            logger.info("Requesting AI to fix the code...")
+            
             fixed_script = fix_manim_code(
                 model, 
                 current_script, 
@@ -1303,20 +1376,26 @@ def validate_and_fix_manim(script_text: str, problem_text: str, results_json: di
             )
             
             if fixed_script:
+                # Check if fix actually changed anything
+                if fixed_script.strip() == current_script.strip():
+                    logger.warning("AI returned unchanged code, stopping retries")
+                    break
+                
                 current_script = fixed_script
-                print("Code fixed by AI, retrying render...")
+                logger.info("Code fixed by AI, retrying render...")
             else:
-                print("AI could not fix the code")
+                logger.error("AI could not generate fixed code")
                 break
+        else:
+            logger.error("Max attempts reached")
     
     # All attempts failed
     return {
         'success': False,
         'video_path': None,
         'script': current_script,
-        'error': f"Failed after {max_attempts} attempts. Last error: {render_result['error'][:500]}"
+        'error': f"Failed after {max_attempts} attempts. Last error: {error_output[:1000]}"
     }
-
 
 def render_manim(script_file: str, attempt_num: int, timeout=300):
     """

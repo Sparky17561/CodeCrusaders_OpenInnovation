@@ -33,7 +33,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p media static
+RUN mkdir -p media static media/temp media/videos
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -42,5 +42,5 @@ ENV PORT=8000
 # Expose the port
 EXPOSE 8000
 
-# Run the application with gunicorn (production server)
-CMD ["gunicorn", "backend.wsgi:application", "--bind", "0.0.0.0:8000", "--timeout", "360"]
+# Run with increased timeout and workers
+CMD ["gunicorn", "backend.wsgi:application", "--bind", "0.0.0.0:8000", "--timeout", "600", "--workers", "2", "--worker-class", "sync"]
