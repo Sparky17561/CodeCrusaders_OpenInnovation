@@ -1585,7 +1585,6 @@ def extract_error_summary(error_output: str, max_lines=30):
 def generate_video(request):
     """
     Generate educational video from math problem using Manim
-    with automatic error fixing and retry logic
     """
     try:
         # Parse request
@@ -1598,139 +1597,146 @@ def generate_video(request):
         if not problem_text:
             return JsonResponse({'error': 'No problem text provided'}, status=400)
         
-        logger.info(f"Generating video for: {problem_text[:100]}...")
+        logger.info(f"=== STARTING VIDEO GENERATION ===")
+        logger.info(f"Problem: {problem_text[:100]}...")
         
-        # Generate unique filenames
         timestamp = int(time.time() * 1000)
         solver_filename = f"wolfram_solver_{timestamp}.py"
         solver_path = os.path.join(WOLFRAM_TEMP_DIR, solver_filename)
         
-        # ===== STEP 1: SOLVE PROBLEM WITH WOLFRAM =====
-        logger.info("Solving problem with Wolfram...")
-        success, results_json, error_info = run_wolfram_solver(problem_text, solver_path)
-        
-        if not success:
+        # ===== STEP 1: SOLVE PROBLEM =====
+        try:
+            logger.info("Step 1: Solving problem with Wolfram...")
+            success, results_json, error_info = run_wolfram_solver(problem_text, solver_path)
+            
+            if not success:
+                logger.error(f"Wolfram solver failed: {error_info}")
+                return JsonResponse({
+                    'error': 'Failed to solve problem',
+                    'details': error_info
+                }, status=500)
+            
+            logger.info(f"Problem solved: {list(results_json.keys())}")
+            
+        except Exception as e:
+            logger.exception("Exception in Wolfram solver")
             return JsonResponse({
-                'error': 'Failed to solve problem',
-                'details': error_info
+                'error': 'Wolfram solver exception',
+                'details': str(e),
+                'traceback': traceback.format_exc()
             }, status=500)
-        
-        logger.info(f"Problem solved successfully: {list(results_json.keys())}")
         
         # ===== STEP 2: GENERATE MANIM SCRIPT =====
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        
-        # Maximum safety disabling
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
-        
-        logger.info("Generating Manim script...")
-        manim_prompt = build_manim_prompt(problem_text, results_json)
-        
-        initial_script = None
-        
-        # Try gemini-2.5-pro first (better for code generation)
-        models_to_try = [
-            ('gemini-2.5-pro', 0.3),
-            ('gemini-2.5-flash', 0.4)
-        ]
-        
-        for model_name, temperature in models_to_try:
-            try:
-                logger.info(f"Trying model: {model_name}")
-                model = genai.GenerativeModel(model_name)
-                
-                manim_response = model.generate_content(
-                    manim_prompt,
-                    safety_settings=safety_settings,
-                    generation_config={
-                        'temperature': temperature,
-                        'max_output_tokens': 8192,
-                        'top_p': 0.95,
-                        'top_k': 40
-                    },
-                    request_options={'timeout': 600}
-                )
-                
-                # Log response details
-                logger.info(f"Response received from {model_name}: {bool(manim_response)}")
-                logger.info(f"Has candidates: {bool(manim_response.candidates) if manim_response else False}")
-                
-                # Extract content even if blocked
-                if manim_response and manim_response.candidates:
-                    candidate = manim_response.candidates[0]
-                    logger.info(f"Finish reason: {candidate.finish_reason} (1=STOP, 2=SAFETY, 3=RECITATION, 4=OTHER, 5=MAX_TOKENS)")
+        try:
+            logger.info("Step 2: Generating Manim script...")
+            genai.configure(api_key=settings.GEMINI_API_KEY)
+            
+            safety_settings = [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+            ]
+            
+            manim_prompt = build_manim_prompt(problem_text, results_json)
+            initial_script = None
+            
+            models_to_try = [
+                ('gemini-2.5-pro', 0.3),
+                ('gemini-2.5-flash', 0.4)
+            ]
+            
+            for model_name, temperature in models_to_try:
+                try:
+                    logger.info(f"Trying {model_name}...")
+                    model = genai.GenerativeModel(model_name)
                     
-                    # Accept ANY response that has content
-                    if hasattr(candidate.content, 'parts') and candidate.content.parts:
-                        initial_script = candidate.content.parts[0].text
-                        logger.info(f"Extracted content from {model_name} (finish_reason: {candidate.finish_reason})")
+                    manim_response = model.generate_content(
+                        manim_prompt,
+                        safety_settings=safety_settings,
+                        generation_config={
+                            'temperature': temperature,
+                            'max_output_tokens': 8192,
+                            'top_p': 0.95,
+                            'top_k': 40
+                        },
+                        request_options={'timeout': 600}
+                    )
+                    
+                    if manim_response and manim_response.candidates:
+                        candidate = manim_response.candidates[0]
+                        logger.info(f"Finish reason: {candidate.finish_reason}")
                         
-                        # Validate it's code
-                        if 'import' in initial_script or 'class' in initial_script:
-                            logger.info("Valid code extracted, proceeding...")
-                            break  # Success!
-                        else:
-                            logger.warning("Response doesn't look like code")
-                            initial_script = None
-                    else:
-                        logger.warning(f"{model_name}: Candidate has no content parts")
-                else:
-                    logger.warning(f"{model_name}: No candidates in response")
-                    
-            except Exception as e:
-                logger.error(f"{model_name} generation failed: {e}")
-                continue
-        
-        # If both models failed
-        if not initial_script:
+                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                            initial_script = candidate.content.parts[0].text
+                            
+                            if 'import' in initial_script or 'class' in initial_script:
+                                logger.info(f"Got valid script from {model_name}")
+                                break
+                            else:
+                                initial_script = None
+                                
+                except Exception as e:
+                    logger.warning(f"{model_name} failed: {e}")
+                    continue
+            
+            if not initial_script:
+                return JsonResponse({
+                    'error': 'Script generation failed',
+                    'hint': 'All models failed to generate code',
+                    'solver_file': solver_filename
+                }, status=500)
+            
+            # Clean markdown
+            initial_script = initial_script.strip()
+            initial_script = initial_script.replace('```python', '').replace('```', '').strip()
+            logger.info(f"Script length: {len(initial_script)} chars")
+            
+        except Exception as e:
+            logger.exception("Exception during script generation")
             return JsonResponse({
-                'error': 'All AI generation attempts failed',
-                'hint': 'Both gemini-2.5-pro and gemini-2.5-flash failed. Safety filters may have blocked content.',
-                'suggestion': 'Try rephrasing the problem or simplifying the question.',
+                'error': 'Script generation exception',
+                'details': str(e),
+                'traceback': traceback.format_exc(),
                 'solver_file': solver_filename
             }, status=500)
         
-        # Clean markdown fences
-        initial_script = initial_script.strip()
-        if initial_script.startswith('```python'):
-            initial_script = initial_script[9:].strip()
-        elif initial_script.startswith('```'):
-            initial_script = initial_script[3:].strip()
-        if initial_script.endswith('```'):
-            initial_script = initial_script[:-3].strip()
-        
-        logger.info(f"Generated script length: {len(initial_script)} chars")
-        
-        # ===== STEP 3: VALIDATE AND RENDER VIDEO =====
-        logger.info("Validating and rendering video...")
-        
-        result = validate_and_fix_manim(
-            script_text=initial_script,
-            problem_text=problem_text,
-            results_json=results_json,
-            max_attempts=3
-        )
-        
-        if not result['success']:
+        # ===== STEP 3: RENDER VIDEO =====
+        try:
+            logger.info("Step 3: Rendering video...")
+            
+            result = validate_and_fix_manim(
+                script_text=initial_script,
+                problem_text=problem_text,
+                results_json=results_json,
+                max_attempts=3
+            )
+            
+            if not result['success']:
+                logger.error(f"Rendering failed: {result['error'][:500]}")
+                return JsonResponse({
+                    'error': 'Video rendering failed',
+                    'details': result['error'],
+                    'solver_file': solver_filename
+                }, status=500)
+            
+            logger.info(f"Video rendered: {result['video_path']}")
+            
+        except Exception as e:
+            logger.exception("Exception during video rendering")
             return JsonResponse({
-                'error': 'Video generation failed',
-                'details': result['error'],
+                'error': 'Video rendering exception',
+                'details': str(e),
+                'traceback': traceback.format_exc(),
                 'solver_file': solver_filename
             }, status=500)
-        
-        logger.info("Video rendered successfully!")
         
         # ===== STEP 4: GENERATE TRANSCRIPT =====
-        logger.info("Generating transcript...")
-        transcript_prompt = build_transcript_prompt(result['script'], problem_text, results_json)
-        
         try:
+            logger.info("Step 4: Generating transcript...")
             transcript_model = genai.GenerativeModel('gemini-2.5-flash')
+            transcript_prompt = build_transcript_prompt(result['script'], problem_text, results_json)
+            
             transcript_response = transcript_model.generate_content(
                 transcript_prompt,
                 safety_settings=safety_settings,
@@ -1742,33 +1748,47 @@ def generate_video(request):
                 if hasattr(candidate.content, 'parts') and candidate.content.parts:
                     transcript = candidate.content.parts[0].text.strip()
                 else:
-                    transcript = "Educational video explanation of the problem and solution."
+                    transcript = "Educational video explanation."
             else:
-                transcript = "Educational video explanation of the problem and solution."
+                transcript = "Educational video explanation."
                 
         except Exception as e:
-            logger.error(f"Transcript generation failed: {e}")
-            transcript = "Educational video explanation of the problem and solution."
+            logger.warning(f"Transcript generation failed: {e}")
+            transcript = "Educational video explanation."
         
         # ===== STEP 5: PREPARE RESPONSE =====
-        video_url = result['video_path'].replace(str(settings.MEDIA_ROOT), '/media')
-        video_url = video_url.replace('\\', '/')  # Windows path fix
+        try:
+            video_url = result['video_path'].replace(str(settings.MEDIA_ROOT), '/media')
+            video_url = video_url.replace('\\', '/')
+            
+            logger.info(f"=== VIDEO GENERATION COMPLETE ===")
+            logger.info(f"Video URL: {video_url}")
+            
+            return JsonResponse({
+                'success': True,
+                'video_url': video_url,
+                'transcript': transcript,
+                'results': results_json,
+                'solver_file': solver_filename,
+                'computation_engine': 'Wolfram Engine'
+            })
+            
+        except Exception as e:
+            logger.exception("Exception preparing response")
+            return JsonResponse({
+                'error': 'Failed to prepare response',
+                'details': str(e),
+                'solver_file': solver_filename
+            }, status=500)
         
-        return JsonResponse({
-            'success': True,
-            'video_url': video_url,
-            'transcript': transcript,
-            'results': results_json,
-            'solver_file': solver_filename,
-            'computation_engine': 'Wolfram Engine'
-        })
-        
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON in request body'}, status=400)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error: {e}")
+        return JsonResponse({'error': 'Invalid JSON', 'details': str(e)}, status=400)
+    
     except Exception as e:
-        logger.exception("Unexpected error in generate_video")
+        logger.exception("UNEXPECTED ERROR IN generate_video")
         return JsonResponse({
-            'error': 'Internal server error',
+            'error': 'Unexpected server error',
             'details': str(e),
             'traceback': traceback.format_exc()
         }, status=500)
