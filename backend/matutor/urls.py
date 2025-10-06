@@ -10,4 +10,6 @@ urlpatterns = [
     path("api/generate-video/", views.generate_video, name="generate-video"),
     path('api/explain-problem/', views.explain_problem, name='explain_problem'),
     path('api/chat-simple/', views.chat_with_wolftor_simple, name='chat_simple'),
+    path('media/videos/<str:filename>', views.get_video, name='get-video'),
+
 ]
