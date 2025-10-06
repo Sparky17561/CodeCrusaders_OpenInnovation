@@ -1383,71 +1383,179 @@ def render_manim(script_file: str, attempt_num: int, timeout=300):
 
 def fix_manim_code(model, broken_code: str, error_output: str, problem_text: str, results_str: str, safety_settings):
     """
-    Use Gemini to fix broken Manim code
-    Returns: fixed code string or None
+    Use Gemini to fix broken Manim code - generic error fixing
     """
     
     # Extract relevant error info
-    error_summary = extract_error_summary(error_output)
+    error_lines = error_output.split('\n')
     
-    fix_prompt = f"""Fix this broken Manim code. Output ONLY the corrected Python code with NO explanations, NO markdown, NO ``` blocks.
+    # Find Python error context
+    python_error = []
+    for i, line in enumerate(error_lines):
+        if any(keyword in line for keyword in ['Error', 'Exception', 'Traceback', 'File "']):
+            start = max(0, i - 5)
+            end = min(len(error_lines), i + 15)
+            python_error = error_lines[start:end]
+            break
+    
+    error_summary = '\n'.join(python_error) if python_error else error_output[-1000:]
+    
+    fix_prompt = f"""Fix this Manim code. The code failed to render with the error shown below.
 
-BROKEN CODE:
-{broken_code}
-
-ERROR:
+ERROR OUTPUT:
 {error_summary}
 
-COMMON FIXES NEEDED:
-- Complete any incomplete code blocks
-- Fix unclosed parentheses, brackets, braces
-- Fix undefined variables
-- Use ONLY these colors: WHITE, BLACK, GRAY, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, PINK, TEAL, GOLD
-- Never use .format() with MathTex - use: MathTex(r"x = " + f"{{val:.2f}}" + r"y")
-- Never index MathTex submobjects like [0][4]
-- Ensure self.remove() calls match what was added
-- Complete the construct() method fully
+CURRENT CODE:
+{broken_code}
+
+INSTRUCTIONS:
+- Output ONLY the corrected Python code
+- NO markdown, NO explanations, NO comments about what you changed
+- Keep the same class name and structure
+- Fix any syntax errors, undefined variables, or API issues
+- Ensure all imports are present
+- Make sure the code is complete and runnable
 
 CONTEXT:
-Problem: {problem_text}
-Results: {results_str}
+Problem being solved: {problem_text}
+Data available: {results_str}
 
-Output the complete fixed Python code now:"""
+Output corrected code:
+"""
     
     try:
         response = model.generate_content(
             fix_prompt,
             safety_settings=safety_settings,
-            generation_config={'temperature': 0.2, 'max_output_tokens': 4096}
+            generation_config={
+                'temperature': 0.2,
+                'max_output_tokens': 8192,
+                'top_p': 0.9
+            }
         )
         
-        if not response.candidates or response.candidates[0].finish_reason != 1:
-            return None
+        if response and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                fixed_code = candidate.content.parts[0].text.strip()
+                
+                # Clean markdown fences
+                if '```' in fixed_code:
+                    lines = fixed_code.split('\n')
+                    cleaned = []
+                    in_code = False
+                    
+                    for line in lines:
+                        stripped = line.strip()
+                        if stripped.startswith('```'):
+                            in_code = not in_code
+                            continue
+                        if not stripped.startswith('```'):
+                            cleaned.append(line)
+                    
+                    fixed_code = '\n'.join(cleaned).strip()
+                
+                # Validate syntax
+                try:
+                    compile(fixed_code, '<string>', 'exec')
+                    logger.info("Fixed code passed syntax validation")
+                    return fixed_code
+                except SyntaxError as e:
+                    logger.warning(f"Fixed code still has syntax error: {e}")
+                    # Return it anyway - might be a false positive
+                    return fixed_code
         
-        fixed_code = response.text.strip()
-        
-        # Clean up markdown
-        if '```' in fixed_code:
-            lines = fixed_code.split('\n')
-            # Remove first and last line if they contain ```
-            if lines[0].startswith('```'):
-                lines = lines[1:]
-            if lines and lines[-1].startswith('```'):
-                lines = lines[:-1]
-            fixed_code = '\n'.join(lines)
-        
-        fixed_code = fixed_code.replace('```python', '').replace('```', '').strip()
-        
-        # Basic syntax check
-        try:
-            compile(fixed_code, '<string>', 'exec')
-            return fixed_code
-        except SyntaxError:
-            return None
+        logger.warning("No valid response from AI code fixer")
+        return None
             
     except Exception as e:
-        print(f"Error fixing code: {e}")
+        logger.error(f"Exception during code fixing: {e}")
         return None
+
+
+def render_manim(script_file: str, attempt_num: int, timeout=300):
+    """
+    Render Manim script - detects class name automatically
+    """
+    try:
+        output_dir = os.path.join(settings.MEDIA_ROOT, 'videos')
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Extract class name from script
+        with open(script_file, 'r', encoding='utf-8') as f:
+            script_content = f.read()
+        
+        # Find class that inherits from Scene
+        class_match = re.search(r'class\s+(\w+)\s*\(\s*Scene\s*\)', script_content)
+        
+        if not class_match:
+            logger.error("No Scene class found in script")
+            return {
+                'success': False,
+                'video_path': None,
+                'error': 'No class inheriting from Scene found in script'
+            }
+        
+        class_name = class_match.group(1)
+        logger.info(f"Found Scene class: {class_name}")
+        
+        # Run Manim render
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "manim",
+                script_file,
+                class_name,  # Use detected class name
+                "-ql",
+                "--media_dir", output_dir,
+                "--format", "mp4"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding='utf-8',
+            errors='replace'
+        )
+        
+        logger.info(f"Manim exit code: {result.returncode}")
+        
+        if result.returncode == 0:
+            # Find generated video
+            video_files = []
+            for root, dirs, files in os.walk(output_dir):
+                for file in files:
+                    if file.endswith('.mp4') and class_name in file:
+                        video_files.append(os.path.join(root, file))
+            
+            if video_files:
+                latest_video = max(video_files, key=os.path.getctime)
+                logger.info(f"Video generated: {latest_video}")
+                return {
+                    'success': True,
+                    'video_path': latest_video,
+                    'error': None
+                }
+        
+        # Failed - return full error
+        full_error = f"RETURN CODE: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+        
+        return {
+            'success': False,
+            'video_path': None,
+            'error': full_error
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {
+            'success': False,
+            'video_path': None,
+            'error': f'Render timeout after {timeout} seconds'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'video_path': None,
+            'error': f"Exception: {str(e)}\n{traceback.format_exc()}"
+        }
 
 
 def extract_error_summary(error_output: str, max_lines=30):
