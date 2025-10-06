@@ -31,11 +31,12 @@ DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 # Allowed hosts configuration
 if DEBUG:
-    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
 else:
     ALLOWED_HOSTS = [
         '.onrender.com',
         'codecrusaders-openinnovation.onrender.com',
+        '.vercel.app',
     ]
 
 # Application definition
@@ -53,7 +54,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Add for static files
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -126,30 +127,61 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS settings
-# CORS settings
-if DEBUG:
-    # Development: Allow all origins
-    CORS_ALLOW_ALL_ORIGINS = True
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://wolftor.vercel.app"  # Remove trailing slash
-    ]
-else:
-    # Production: Specify your frontend URL
-    CORS_ALLOWED_ORIGINS = os.environ.get(
-        'CORS_ALLOWED_ORIGINS',
-        'https://wolftor.vercel.app'  # Remove trailing slash
-    ).split(',') if os.environ.get('CORS_ALLOWED_ORIGINS') else ['https://wolftor.vercel.app']
-    CORS_ALLOW_ALL_ORIGINS = False
+# CORS settings - FIXED FOR PRODUCTION
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://wolftor.vercel.app",
+]
 
+# Add custom origins from environment variable
+custom_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
+if custom_origins:
+    CORS_ALLOWED_ORIGINS.extend([origin.strip() for origin in custom_origins.split(',') if origin.strip()])
+
+# Allow credentials (cookies, authorization headers)
 CORS_ALLOW_CREDENTIALS = True
+
+# Allow all methods
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# Allow all standard headers
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# CSRF trusted origins
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://wolftor.vercel.app',
+    'https://codecrusaders-openinnovation.onrender.com',
+    'https://*.onrender.com',
+]
 
 # Security settings for production
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
-    X_FRAME_OPTIONS = 'DENY'
+    X_FRAME_OPTIONS = 'SAMEORIGIN'  # Changed from DENY to allow embedding if needed
     SECURE_CONTENT_TYPE_NOSNIFF = True
+    # Don't enforce HTTPS redirect on Render (they handle it)
+    SECURE_SSL_REDIRECT = False
