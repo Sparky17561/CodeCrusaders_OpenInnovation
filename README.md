@@ -158,10 +158,10 @@ A powerhouse squad of 5 from the HackAura Open Innovation Track:
 - **Sahil Rane**: Wolfram Wizard & Lead Integrator  
 - **Saiprasad Jamdar**: Django Dynamo (Backend Boss)  
 - **Rajnish Rao**: React Rockstar (Frontend Phenom)  
-- **Shrusti Kadam**: Manim Maestro (Visualization Virtuoso)  
+- **Shrusti Kadam**: Manim Maestro + AI Intgrator (Visualization Virtuoso)  
 - **Aaditya Jaiswar**: FFmpeg Firestarter (Pipeline Pro)  
 
-Mail-> [codecrusaders@example.com](mailto:sahilrane249@gmail.com) | Github -> [GitHub Repo](https://github.com/Sparky17561/CodeCrusaders_OpenInnovation)
+
 
 ---
 
