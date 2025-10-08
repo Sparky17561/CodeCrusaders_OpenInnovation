@@ -158,7 +158,7 @@ A powerhouse squad of 5 from the HackAura Open Innovation Track:
 - **Sahil Rane**: Wolfram Wizard & Lead Integrator  
 - **Saiprasad Jamdar**: Django Dynamo (Backend Boss)  
 - **Rajnish Rao**: React Rockstar (Frontend Phenom)  
-- **Shrusti Kadam**: Manim Maestro + AI Intgrator (Visualization Virtuoso)  
+- **Srushti Kadam**: Manim Maestro + AI Intgrator (Visualization Virtuoso)  
 - **Aaditya Jaiswar**: FFmpeg Firestarter (Pipeline Pro)  
 
 
